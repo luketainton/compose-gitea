@@ -1,0 +1,126 @@
+services:
+  app:
+    image: gitea/gitea:1-rootless
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=postgres
+      - GITEA__database__HOST=db:5432
+      - GITEA__database__NAME=${DC_DB_NAME}
+      - GITEA__database__USER=${DC_DB_NAME}
+      - GITEA__database__PASSWD=${DC_DB_PASSWORD}
+      - GITEA__mailer__ENABLED=true
+      - GITEA__mailer__FROM=${DC_SMTP_USERNAME}
+      - GITEA__mailer__PROTOCOL=smtps
+      - GITEA__mailer__SMTP_ADDR=${DC_SMTP_HOST}
+      - GITEA__mailer__SMTP_PORT=${DC_SMTP_PORT}
+      - GITEA__mailer__USER=${DC_SMTP_USERNAME}
+      - GITEA__mailer__PASSWD=${DC_SMTP_PASSWORD}
+    volumes:
+      - /docker/gitea/data/app/config:/etc/gitea
+      - /docker/gitea/data/app/data:/var/lib/gitea
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - 3000:3000
+      - 2222:22
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: curl -fSs 127.0.0.1:3000/api/healthz | grep -q -w pass || exit 1
+      start_period: 60s
+      interval: 5s
+      timeout: 10s
+      retries: 3
+    labels:
+      glance.hide: false
+      glance.name: Gitea
+      glance.icon: si:gitea
+      glance.url: https://git.tainton.uk
+      glance.description: Git repository
+      glance.id: gitea
+      cloudflare.tunnel.enable: true
+      cloudflare.tunnel.hostname: git.tainton.uk
+      cloudflare.tunnel.no_tls_verify: false
+      cloudflare.tunnel.service: http://172.17.0.1:3000
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DC_DB_NAME}
+      - POSTGRES_DB=${DC_DB_NAME}
+      - POSTGRES_PASSWORD=${DC_DB_PASSWORD}
+    volumes:
+      - /docker/gitea/data/db:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${DC_DB_NAME}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      glance.parent: gitea
+      glance.name: DB
+
+  runner:
+    image: gitea/act_runner:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - 172.17.0.1:39509:39509
+    environment:
+      - CONFIG_FILE=/config.yaml
+      - GITEA_INSTANCE_URL=${DC_GITEA_INSTANCE_URL}
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${DC_GITEA_RUNNER_REGISTRATION_TOKEN}
+    volumes:
+      - /docker/gitea/data/runner/config/config.yaml:/config.yaml:ro
+      - /docker/gitea/data/runner/data:/data
+      - /docker/gitea/data/runner/cache/act:/root/.cache/act
+      - /docker/gitea/data/runner/cache/actcache:/root/.cache/actcache
+      - /docker/gitea/data/runner/cache/toolcache:/toolcache
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      mode: replicated
+      replicas: 1
+    labels:
+      glance.parent: gitea
+      glance.name: Actions Runner
+
+  # cache:
+  #   image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
+  #   ports:
+  #     - 172.17.0.1:39509:3000
+  #   environment:
+  #     - URL_ACCESS_TOKEN=cache
+  #     - API_BASE_URL=http://172.17.0.1:39509
+  #     - STORAGE_DRIVER=s3
+  #     - STORAGE_S3_BUCKET=ghacache
+  #     - STORAGE_S3_ACCESS_KEY=${S3_ACCESS_KEY}
+  #     - STORAGE_S3_SECRET_KEY=${S3_SECRET_KEY}
+  #     - STORAGE_S3_ENDPOINT=s3.tainton.uk
+  #     - STORAGE_S3_PORT=443
+  #     - STORAGE_S3_USE_SSL=true
+  #     - ENABLE_DIRECT_DOWNLOADS=true
+  #   volumes:
+  #     - /docker/gitea/data/cache:/app/.data
+  #   deploy:
+  #     mode: replicated
+  #     replicas: 0
+  #   labels:
+  #     glance.parent: gitea
+  #     glance.name: Actions Cache
+
+  metrics:
+    image: telegraf:alpine
+    restart: unless-stopped
+    command: telegraf --config ${DC_METRICS_INFLUX_URL}
+    environment:
+      - INFLUX_TOKEN=${DC_METRICS_INFLUX_TOKEN}
+    labels:
+      glance.parent: gitea
+      glance.name: Metrics
