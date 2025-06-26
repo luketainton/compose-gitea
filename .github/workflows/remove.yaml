@@ -22,6 +22,6 @@ jobs:
           port: ${{ secrets.DEPLOY_PORT }}
           script: |
             cd ${{ env.project_folder }}
-            docker compose --env-file .env down
+            docker compose --project-name gitea --env-file .env down
             cd ..
             rm -rf ${{ env.project_folder }}
