@@ -69,6 +69,8 @@ services:
   runner:
     image: gitea/act_runner:latest
     restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2
     depends_on:
       - app
     ports:
